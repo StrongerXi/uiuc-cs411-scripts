@@ -57,7 +57,7 @@ def get_violating_fds(relation, fds):
     keys = get_keys(relation, fds)
 
     def is_superkey(elems):
-        return any(map(lambda key: key.issubset(lhs), keys))
+        return any(map(lambda key: key.issubset(elems), keys))
 
     def is_violating_fd(fd):
         lhs, _ = fd
@@ -70,10 +70,11 @@ def get_fd_with_largest_rhs(fds):
     # input may be empty, in which case output is `None`
     largest_rhs_cardinality = 0
     fd_with_largest_rhs = None
-    for _, rhs in fds:
+    for fd in fds:
+        _, rhs = fd
         if len(rhs) > largest_rhs_cardinality:
             largest_rhs_cardinality = len(rhs)
-            fd_with_largest_rhs = rhs
+            fd_with_largest_rhs = fd
     return fd_with_largest_rhs
 
 
@@ -96,7 +97,7 @@ def merge_rhs_in_fds(sfds):
             lhs_to_rhs[lhs_fs].update(rhs)
         else:
             lhs_to_rhs[lhs_fs] = set(rhs)
-    fds = [(lhs, rhs) for lhs, rhs in lhs_to_rhs.items()]
+    fds = [(set(lhs), rhs) for lhs, rhs in lhs_to_rhs.items()]
     return fds
 
 
@@ -187,7 +188,7 @@ def decompose_impl(init_relation, init_fds):
 
         lhs_elems = worst_fd[0]
         violating_fd_relation_rhs = get_nontrivial_closure_of(lhs_elems, fds)
-        violating_fd_relation = (lhs_elems, violating_fd_relation_rhs)
+        violating_fd_relation = lhs_elems.union(violating_fd_relation_rhs)
         other_relation = relation.difference(violating_fd_relation_rhs)
 
         def recur(projected_relation):
@@ -202,17 +203,19 @@ def decompose_impl(init_relation, init_fds):
 
 
 def decompose(relation, raw_fds):
-    # [Set X] [Iterable [Tuple [Set X] [Set X]]] ->
+    # [Iterable X] [Iterable [Tuple [Iterable X] [Iterable X]]] ->
     #    [List [Tuple Relation [Iterable FD]]]
+    normalized_relation = set(relation)
     normalized_fds = []
     for lhs, rhs in raw_fds:
         if len(lhs) == 0 or len(rhs) == 0:
             print(f'empty lhs/rhs in raw_fds: {lhs} --> {rhs}')
             exit()
-        rhs = lhs.difference(lhs)
+        lhs = set(lhs)
+        rhs = set(rhs).difference(lhs)
         normalized_fd = (lhs, rhs)
         normalized_fds.append(normalized_fd)
-    return decompose_impl(relation, normalized_fds)
+    return decompose_impl(normalized_relation, normalized_fds)
 
 
 # ------------------------------------------
@@ -269,13 +272,16 @@ def test_get_projected_fds():
 # ------------------MAIN-------------------
 # -----------------------------------------
 def main():
-    init_relation = []
+    init_relation = 'ABCD'
     init_raw_fds = [
+        ('AB', 'C'),
+        ('B', 'D'),
+        ('C', 'A'),
     ]
-    result = decompose(relation, raw_fds)
-    for relation, fds in result:
+    result = decompose(init_relation, init_raw_fds)
+    for projected_relation, projected_fds in result:
         # TODO pretty-printing
-        print(relation, raw_fds)
+        print(projected_relation, projected_fds)
 
 
 if __name__ == '__main__':
