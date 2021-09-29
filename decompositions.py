@@ -24,6 +24,10 @@ def powerset(init_elems):
     return go(s)
 
 
+def is_superkey(elems, keys):
+    return any(map(lambda key: key.issubset(elems), keys))
+
+
 def get_keys(relation, fds):
     # R [Iterable FD] -> [Iterable [Set X]]
 
@@ -56,12 +60,9 @@ def get_keys(relation, fds):
 def get_violating_fds(relation, fds):
     keys = get_keys(relation, fds)
 
-    def is_superkey(elems):
-        return any(map(lambda key: key.issubset(elems), keys))
-
     def is_violating_fd(fd):
         lhs, _ = fd
-        return not is_superkey(lhs)
+        return not is_superkey(lhs, keys)
 
     return list(filter(is_violating_fd, fds))
 
@@ -173,7 +174,7 @@ def get_nontrivial_closure_of(elems, fds):
     return result.difference(elems)
 
 
-def decompose_impl(init_relation, init_fds):
+def decompose_bcnf_impl(init_relation, init_fds):
     # R [Iterable FD] -> [List [Tuple Relation [Iterable FD]]]
     results = []
 
@@ -202,10 +203,25 @@ def decompose_impl(init_relation, init_fds):
     return results
 
 
-def decompose(relation, raw_fds):
-    # [Iterable X] [Iterable [Tuple [Iterable X] [Iterable X]]] ->
-    #    [List [Tuple Relation [Iterable FD]]]
-    normalized_relation = set(relation)
+def decompose_3nf_impl(init_relation, init_fds):
+    # R [Iterable FD] -> [Tuple [List R] [Iterable FD]]
+    minimal_basis = get_minimal_cover(init_fds)
+    relations = [lhs.union(rhs) for lhs, rhs in minimal_basis]
+    keys = get_keys(init_relation, minimal_basis)
+
+    if not any(map(lambda relation: is_superkey(relation, keys), relations)):
+        min_key = min(keys, key=len)
+        relations.append(min_key)
+    return relations, minimal_basis
+
+
+def normalize_relation(raw_relation):
+    # [Iterable X] -> R
+    return set(raw_relation)
+
+
+def normalize_fds(raw_fds):
+    # [Iterable [Tuple [Iterable X] [Iterable X]]] -> [Iterable FD]
     normalized_fds = []
     for lhs, rhs in raw_fds:
         if len(lhs) == 0 or len(rhs) == 0:
@@ -215,7 +231,23 @@ def decompose(relation, raw_fds):
         rhs = set(rhs).difference(lhs)
         normalized_fd = (lhs, rhs)
         normalized_fds.append(normalized_fd)
-    return decompose_impl(normalized_relation, normalized_fds)
+    return normalized_fds
+
+
+def decompose_bcnf(raw_relation, raw_fds):
+    # [Iterable X] [Iterable [Tuple [Iterable X] [Iterable X]]] ->
+    #    [List [Tuple Relation [Iterable FD]]]
+    normalized_relation = normalize_relation(raw_relation)
+    normalized_fds = normalize_fds(raw_fds)
+    return decompose_bcnf_impl(normalized_relation, normalized_fds)
+
+
+def decompose_3nf(raw_relation, raw_fds):
+    # [Iterable X] [Iterable [Tuple [Iterable X] [Iterable X]]] ->
+    #    [Tuple [List Relation] [Iterable FD]]
+    normalized_relation = normalize_relation(raw_relation)
+    normalized_fds = normalize_fds(raw_fds)
+    return decompose_3nf_impl(normalized_relation, normalized_fds)
 
 
 # ------------------------------------------
@@ -278,11 +310,27 @@ def main():
         ('B', 'D'),
         ('C', 'A'),
     ]
-    result = decompose(init_relation, init_raw_fds)
+    result = decompose_bcnf(init_relation, init_raw_fds)
     for projected_relation, projected_fds in result:
         # TODO pretty-printing
         print(projected_relation, projected_fds)
 
 
+def main_3nf():
+    init_relation = 'ABCDEF'
+    init_raw_fds = [
+        ('A', 'C'),
+        ('B', 'C'),
+        ('C', 'A'),
+        ('CD', 'F'),
+        ('CE', 'D'),
+    ]
+    relations, fds = decompose_3nf(init_relation, init_raw_fds)
+    print(fds)
+    for relation in relations:
+        print(relation)
+
 if __name__ == '__main__':
-    main()
+    # TODO
+    # do we need to remove redundant relations?
+    main_3nf()
