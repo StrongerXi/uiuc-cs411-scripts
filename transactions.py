@@ -71,7 +71,7 @@ class TransactionParser():
             self._consume_spaces()
             op = self._parse_op()
             self._consume_spaces()
-            self._assert_next_ch_or_eof(';')
+            self._assert_next_ch_or_eof(',;')
             self._ops.append(op)
         
 
@@ -111,21 +111,21 @@ class TransactionParser():
             return next_ch
 
 
-    def _assert_next_ch_or_eof(self, expect_ch) -> Optional[str]:
+    def _assert_next_ch_or_eof(self, expect_chs: str) -> Optional[str]:
         next_ch = self._peek_ch()
         if next_ch is None:
             return None
-        elif next_ch != expect_ch:
-            raise RuntimeError(f'Expected character [{expect_ch}], but got [{next_ch}]')
+        elif next_ch not in expect_chs:
+            raise RuntimeError(f'Expected a character in [{expect_chs}], but got [{next_ch}]')
         else:
             self._next_ch_idx += 1
             return next_ch
 
 
-    def _assert_next_ch(self, expect_ch) -> str:
-        next_ch = self._assert_next_ch_or_eof(expect_ch)
+    def _assert_next_ch(self, expect_chs) -> str:
+        next_ch = self._assert_next_ch_or_eof(expect_chs)
         if next_ch is None:
-            raise RuntimeError(f'Expected character [{expect_ch}], but there is no more input')
+            raise RuntimeError(f'Expected a character in [{expect_ch}], but there is no more input')
         else:
             return next_ch
 
@@ -262,8 +262,7 @@ class LockManager():
                 return False
             if len(owners) == 1:
                 if initiator in owners:
-                    self._exclusive_locks[target] = initiator
-                    self.release_lock(self, initiator, target)
+                    self.release_lock(initiator, target)
                 else:
                     return False
         self._initiator_to_locks_map[initiator][target] = LockType.EXCLUSIVE
@@ -273,8 +272,9 @@ class LockManager():
 
     def release_lock(self, initiator, target):
         lock_type = self._initiator_to_locks_map[initiator][target]
+        del self._initiator_to_locks_map[initiator][target]
         if lock_type == LockType.SHARED:
-            self._shared_locks[target].remove(target)
+            self._shared_locks[target].remove(initiator)
         elif lock_type == LockType.EXCLUSIVE:
             del self._exclusive_locks[target]
 
@@ -283,7 +283,7 @@ class LockManager():
         locks_map = self._initiator_to_locks_map[initiator]
         all_targets = locks_map.keys()
 
-        for target, _ in locks_map.items():
+        for target, _ in list(locks_map.items()):
             self.release_lock(initiator, target)
         return all_targets
 
@@ -384,11 +384,11 @@ def deserialize_ops(ops: Iterable[Operation]) -> str:
 
 
 if __name__ == '__main__':
-    s = 'R1(C);R1(A);W2(C);R1(A);W1(C);W2(C);W1(C)'
+    s = 'R1(A), R2(B), W1(A), W2(B), W1(C), R1(C)'
     ops = TransactionParser.parse(s)
     policy = {
         '1': IsolationLevel.REPEATABLE_READ,
-        '2': IsolationLevel.READ_COMMITTED,
+        '2': IsolationLevel.REPEATABLE_READ,
     }
     new_ops = complete_transaction(ops, policy)
     for op in new_ops:
