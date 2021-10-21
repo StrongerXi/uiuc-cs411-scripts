@@ -270,6 +270,11 @@ class LockManager():
         return True
 
 
+    def get_lock(self, initiator, target) -> Optional[LockType]:
+        lock_map = self._initiator_to_locks_map[initiator]
+        return lock_map[target] if target in lock_map else None
+
+
     def release_lock(self, initiator, target):
         lock_type = self._initiator_to_locks_map[initiator][target]
         del self._initiator_to_locks_map[initiator][target]
@@ -293,7 +298,7 @@ class IsolationLevel(Enum):
     REPEATABLE_READ = auto()
     
 
-def add_in_end_of_transactions(ops: Iterable[Operation]) -> Iterable[Operation]:
+def _add_in_end_of_transactions(ops: Iterable[Operation]) -> Iterable[Operation]:
     last_op_idx_map = {} # maps initiator to index
     for idx, op in enumerate(ops):
         last_op_idx_map[op.initiator] = idx
@@ -307,43 +312,61 @@ def add_in_end_of_transactions(ops: Iterable[Operation]) -> Iterable[Operation]:
     return new_ops
 
 
+def _augment_read(
+    read: Read, lock_manager: LockManager, policy: Dict[str, IsolationLevel]
+) -> (Iterable[Operation], bool): # bool indicates whether a lock was denied
+    new_ops = []
+    if (lock_manager.get_lock(read.initiator, read.target) is None):
+        if not lock_manager.add_shared_lock(read.initiator, read.target):
+            new_ops.append(DenyLock(read.initiator, read.target))
+            return (new_ops, True)
+        else:
+            new_ops.append(GetSharedLock(read.initiator, read.target))
+    new_ops.append(read)
+
+    iso_level = policy[read.initiator]
+    if iso_level == IsolationLevel.READ_COMMITTED:
+        lock_manager.release_lock(read.initiator, read.target)
+        locks = (read.target,)
+        new_ops.append(ReleaseLocks(read.initiator, locks))
+    return (new_ops, False)
+
+
+def _augment_write(
+    write: Write, lock_manager: LockManager
+) -> (Iterable[Operation], bool): # bool indicates whether a lock was denied
+    new_ops = []
+    if lock_manager.get_lock(write.initiator, write.target) != LockType.EXCLUSIVE:
+        if not lock_manager.add_exclusive_lock(write.initiator, write.target):
+            new_ops.append(DenyLock(write.initiator, write.target))
+            return (new_ops, True)
+        else:
+            new_ops.append(GetExclusiveLock(write.initiator, write.target))
+    new_ops.append(write)
+    return (new_ops, False)
+
+
 def _augment_op(
     op: Operation, lock_manager: LockManager, policy: Dict[str, IsolationLevel]
 ) -> (Iterable[Operation], bool): # bool indicates whether a lock was denied
-    iso_level = policy[op.initiator]
-    new_ops = []
-    # TODO check for locks before add
     if isinstance(op, Read):
-        new_ops.append(GetSharedLock(op.initiator, op.target))
-        if not lock_manager.add_shared_lock(op.initiator, op.target):
-            new_ops.append(DenyLock(op.initiator, op.target))
-            return (new_ops, True)
-
-        new_ops.append(op)
-        if iso_level == IsolationLevel.READ_COMMITTED:
-            lock_manager.release_lock(op.initiator, op.target)
-            locks = (op.target,)
-            new_ops.append(ReleaseLocks(op.initiator, locks))
+        return _augment_read(op, lock_manager, policy)
 
     elif isinstance(op, Write):
-        new_ops.append(GetExclusiveLock(op.initiator, op.target))
-        if not lock_manager.add_exclusive_lock(op.initiator, op.target):
-            new_ops.append(DenyLock(op.initiator, op.target))
-            return (new_ops, True)
-        new_ops.append(op)
+        return _augment_write(op, lock_manager)
 
     elif isinstance(op, EndOfTransaction):
         locks = lock_manager.release_all_locks(op.initiator)
+        new_ops = []
         new_ops.append(ReleaseLocks(op.initiator, locks))
         new_ops.append(op)
-
-    return (new_ops, False)
+        return (new_ops, False)
 
 
 def complete_transaction(
     ops: Iterable[Operation], policy: Dict[str, IsolationLevel]
 ) -> Iterable[Operation]:
-    ops = add_in_end_of_transactions(ops)
+    ops = _add_in_end_of_transactions(ops)
     lock_manager = LockManager()
     new_ops = []
 
@@ -384,11 +407,11 @@ def deserialize_ops(ops: Iterable[Operation]) -> str:
 
 
 if __name__ == '__main__':
-    s = 'R1(A), R2(B), W1(A), W2(B), W1(C), R1(C)'
+    s = 'R1(B), W1(B), R2(A), W2(B), R1(C)'
     ops = TransactionParser.parse(s)
     policy = {
-        '1': IsolationLevel.REPEATABLE_READ,
-        '2': IsolationLevel.REPEATABLE_READ,
+        '1': IsolationLevel.READ_COMMITTED,
+        '2': IsolationLevel.READ_COMMITTED,
     }
     new_ops = complete_transaction(ops, policy)
     for op in new_ops:
