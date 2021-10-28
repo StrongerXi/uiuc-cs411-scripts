@@ -286,7 +286,7 @@ class LockManager():
 
     def release_all_locks(self, initiator) -> Iterable[str]:
         locks_map = self._initiator_to_locks_map[initiator]
-        all_targets = locks_map.keys()
+        all_targets = list(locks_map.keys())
 
         for target, _ in list(locks_map.items()):
             self.release_lock(initiator, target)
